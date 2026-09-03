@@ -64,7 +64,8 @@ object AxmlModifier {
         for (i in 0 until strings.size) {
             val s = strings[i]
             when {
-                s == "com.example" -> strings[i] = newPackageName
+                s == "com.web2apk.template" || s == "com.example" -> strings[i] = newPackageName
+                s.startsWith("com.web2apk.template.") -> strings[i] = s.replace("com.web2apk.template", newPackageName)
                 s.startsWith("com.example.") -> strings[i] = s.replace("com.example", newPackageName)
                 s == "1.0" && versionName.isNotBlank() -> strings[i] = versionName
             }

@@ -40,6 +40,14 @@ object ApkBuilder {
             versionName = versionName
         )
 
+        // Read and configure resources.arsc table
+        val baseArscBytes = context.assets.open("resources.arsc").use { it.readBytes() }
+        val modifiedArscBytes = ArscModifier.modifyArsc(
+            baseArscBytes = baseArscBytes,
+            newAppName = name,
+            newPackageName = packageName
+        )
+
         // 2. Read classes.dex
         onProgress(0.4f, "Loading runtime DEX engine...")
         val dexBytes = context.assets.open("template_classes.dex").use { it.readBytes() }
@@ -83,11 +91,15 @@ object ApkBuilder {
             // AndroidManifest.xml
             writeZipEntry(zout, "AndroidManifest.xml", modifiedManifestBytes)
 
+            // resources.arsc
+            writeZipEntry(zout, "resources.arsc", modifiedArscBytes)
+
             // classes.dex
             writeZipEntry(zout, "classes.dex", dexBytes)
 
-            // res/drawable/ic_launcher.png
+            // Launcher icons for standard and high density
             writeZipEntry(zout, "res/drawable/ic_launcher.png", iconPngBytes)
+            writeZipEntry(zout, "res/drawable-xxhdpi/ic_launcher.png", iconPngBytes)
 
             // assets/app_config.json
             writeZipEntry(zout, "assets/app_config.json", configJson)

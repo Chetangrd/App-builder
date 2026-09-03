@@ -192,6 +192,42 @@ object ApkSignerHelper {
         val privateKey = credentials.privateKey
         val cert = credentials.certificate
 
+        try {
+            Log.i(TAG, "Signing APK using Android ApkSigner (v1, v2, v3 schemes)...")
+            val signerConfig = com.android.apksig.ApkSigner.SignerConfig.Builder(
+                "CERT",
+                privateKey,
+                listOf(cert)
+            ).build()
+
+            val apkSigner = com.android.apksig.ApkSigner.Builder(listOf(signerConfig))
+                .setInputApk(unsignedZipFile)
+                .setOutputApk(outputSignedApkFile)
+                .setV1SigningEnabled(true)
+                .setV2SigningEnabled(true)
+                .setV3SigningEnabled(true)
+                .setOtherSignersSignaturesPreserved(false)
+                .build()
+
+            apkSigner.sign()
+            Log.i(TAG, "APK successfully signed with v1, v2, and v3 schemes: ${outputSignedApkFile.length()} bytes")
+            return
+        } catch (e: Throwable) {
+            Log.w(TAG, "ApkSigner encountered issue, falling back to manual JAR signer: ${e.message}", e)
+        }
+
+        signApkManual(context, unsignedZipFile, outputSignedApkFile)
+    }
+
+    private fun signApkManual(
+        context: Context,
+        unsignedZipFile: File,
+        outputSignedApkFile: File
+    ) {
+        val credentials = getSigningCredentials(context)
+        val privateKey = credentials.privateKey
+        val cert = credentials.certificate
+
         val md = MessageDigest.getInstance("SHA-256")
 
         // 1. Build MANIFEST.MF

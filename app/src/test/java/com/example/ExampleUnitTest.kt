@@ -23,6 +23,50 @@ class ExampleUnitTest {
         println("Generated certificate verified successfully: ${cert.subjectX500Principal}")
     }
 
+    @Test
+    fun testApkSignerLibrary() {
+        val kpg = KeyPairGenerator.getInstance("RSA")
+        kpg.initialize(2048)
+        val keyPair = kpg.generateKeyPair()
+        val cert = generateTestCert(keyPair)
+
+        val manifestFile = if (java.io.File("src/main/assets/base_manifest.bin").exists()) {
+            java.io.File("src/main/assets/base_manifest.bin")
+        } else {
+            java.io.File("app/src/main/assets/base_manifest.bin")
+        }
+        val manifestBytes = manifestFile.readBytes()
+        val inputZip = java.io.File.createTempFile("unsigned", ".zip")
+        java.util.zip.ZipOutputStream(java.io.FileOutputStream(inputZip)).use { zos ->
+            zos.putNextEntry(java.util.zip.ZipEntry("AndroidManifest.xml"))
+            zos.write(manifestBytes)
+            zos.closeEntry()
+            zos.putNextEntry(java.util.zip.ZipEntry("hello.txt"))
+            zos.write("Hello World".toByteArray())
+            zos.closeEntry()
+        }
+
+        val outputApk = java.io.File.createTempFile("signed", ".apk")
+        val signerConfig = com.android.apksig.ApkSigner.SignerConfig.Builder(
+            "CERT",
+            keyPair.private,
+            listOf(cert)
+        ).build()
+
+        com.android.apksig.ApkSigner.Builder(listOf(signerConfig))
+            .setInputApk(inputZip)
+            .setOutputApk(outputApk)
+            .setV1SigningEnabled(true)
+            .setV2SigningEnabled(true)
+            .setV3SigningEnabled(true)
+            .build()
+            .sign()
+
+        assertTrue(outputApk.exists())
+        assertTrue(outputApk.length() > 0)
+        println("Signed APK size with v1, v2, v3: ${outputApk.length()} bytes")
+    }
+
     private fun generateTestCert(keyPair: java.security.KeyPair): X509Certificate {
         val oidSha256WithRsa = byteArrayOf(
             0x06, 0x09, 0x2A, 0x86.toByte(), 0x48, 0x86.toByte(), 0xF7.toByte(), 0x0D, 0x01, 0x01, 0x0B

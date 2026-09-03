@@ -69,35 +69,39 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `verify full apk building flow`() = runBlocking {
-    val context = ApplicationProvider.getApplicationContext<Context>()
-    val apk = com.example.engine.ApkBuilder.buildApk(
-      context = context,
-      name = "Test Web App",
-      packageName = "com.test.webapp",
-      targetUrl = "https://example.com",
-      isLocalFile = false,
-      localHtmlContent = "",
-      versionName = "1.0",
-      themeColorHex = "#2563EB",
-      iconPresetName = "web",
-      customIconBitmap = null,
-      enablePrint = true
-    )
+  fun testFullApkBuildingFlow() {
+    runBlocking {
+      val context = ApplicationProvider.getApplicationContext<Context>()
+      val apk = com.example.engine.ApkBuilder.buildApk(
+        context = context,
+        name = "Test Web App",
+        packageName = "com.test.webapp",
+        targetUrl = "https://example.com",
+        isLocalFile = false,
+        localHtmlContent = "",
+        versionName = "1.0",
+        themeColorHex = "#2563EB",
+        iconPresetName = "web",
+        customIconBitmap = null,
+        enablePrint = true
+      )
 
-    assertNotNull(apk)
-    val file = java.io.File(apk.filePath)
-    org.junit.Assert.assertTrue(file.exists())
-    org.junit.Assert.assertTrue(file.length() > 0)
+      assertNotNull(apk)
+      val file = java.io.File(apk.filePath)
+      org.junit.Assert.assertTrue(file.exists())
+      org.junit.Assert.assertTrue(file.length() > 0)
 
-    // Verify APK contains signature files
-    java.util.zip.ZipFile(file).use { zip ->
-      assertNotNull(zip.getEntry("META-INF/MANIFEST.MF"))
-      assertNotNull(zip.getEntry("META-INF/CERT.SF"))
-      assertNotNull(zip.getEntry("META-INF/CERT.RSA"))
-      assertNotNull(zip.getEntry("AndroidManifest.xml"))
-      assertNotNull(zip.getEntry("classes.dex"))
-      assertNotNull(zip.getEntry("assets/app_config.json"))
+      // Verify APK contains signature files
+      java.util.zip.ZipFile(file).use { zip ->
+        assertNotNull(zip.getEntry("META-INF/MANIFEST.MF"))
+        assertNotNull(zip.getEntry("META-INF/CERT.SF"))
+        assertNotNull(zip.getEntry("META-INF/CERT.RSA"))
+        assertNotNull(zip.getEntry("AndroidManifest.xml"))
+        assertNotNull(zip.getEntry("resources.arsc"))
+        assertNotNull(zip.getEntry("classes.dex"))
+        assertNotNull(zip.getEntry("assets/app_config.json"))
+      }
+      file.copyTo(java.io.File("/tmp/test_output.apk"), overwrite = true)
     }
   }
 }
