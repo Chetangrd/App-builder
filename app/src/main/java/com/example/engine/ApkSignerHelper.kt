@@ -2,14 +2,20 @@ package com.example.engine
 
 import android.content.Context
 import android.util.Base64
+import android.util.Log
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.math.BigInteger
+import java.security.KeyPair
+import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.Signature
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -17,20 +23,174 @@ import java.util.zip.ZipOutputStream
 
 object ApkSignerHelper {
 
+    private const val TAG = "ApkSignerHelper"
+
+    data class SigningCredentials(
+        val privateKey: PrivateKey,
+        val certificate: X509Certificate
+    )
+
+    @Volatile
+    private var cachedCredentials: SigningCredentials? = null
+
+    @Synchronized
+    fun getSigningCredentials(context: Context): SigningCredentials {
+        cachedCredentials?.let { return it }
+
+        val password = "android".toCharArray()
+        val defaultAlias = "androiddebugkey"
+
+        // 1. Try loading from assets ("debug.keystore")
+        val fromAssets = tryLoadFromAssets(context, password, defaultAlias)
+        if (fromAssets != null) {
+            Log.d(TAG, "Successfully loaded keystore from assets")
+            cachedCredentials = fromAssets
+            return fromAssets
+        }
+
+        // 2. Try loading from internal files directory
+        val internalKeystoreFile = File(context.filesDir, "debug.keystore")
+        val fromInternal = tryLoadFromFile(internalKeystoreFile, password, defaultAlias)
+        if (fromInternal != null) {
+            Log.d(TAG, "Successfully loaded keystore from internal storage")
+            cachedCredentials = fromInternal
+            return fromInternal
+        }
+
+        // 3. Dynamically generate an RSA-2048 KeyPair and self-signed X.509 certificate on device
+        Log.i(TAG, "Generating dynamic signing credentials on device...")
+        val kpg = KeyPairGenerator.getInstance("RSA")
+        kpg.initialize(2048)
+        val keyPair = kpg.generateKeyPair()
+        val cert = generateSelfSignedCertificate(keyPair)
+
+        val creds = SigningCredentials(keyPair.private, cert)
+
+        // Attempt to save to internal storage for reuse
+        try {
+            val ks = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+                load(null, null)
+                setKeyEntry(defaultAlias, keyPair.private, password, arrayOf(cert))
+            }
+            FileOutputStream(internalKeystoreFile).use { fos ->
+                ks.store(fos, password)
+            }
+            Log.d(TAG, "Cached dynamically generated keystore to ${internalKeystoreFile.absolutePath}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not persist keystore to internal storage (non-fatal)", e)
+        }
+
+        cachedCredentials = creds
+        return creds
+    }
+
+    private fun tryLoadFromAssets(context: Context, password: CharArray, defaultAlias: String): SigningCredentials? {
+        val formats = listOf("PKCS12", KeyStore.getDefaultType())
+        for (format in formats) {
+            try {
+                val ks = KeyStore.getInstance(format)
+                context.assets.open("debug.keystore").use { stream ->
+                    ks.load(stream, password)
+                }
+                val creds = extractCredentials(ks, password, defaultAlias)
+                if (creds != null) return creds
+            } catch (ignored: Exception) {
+                // Try next format
+            }
+        }
+        return null
+    }
+
+    private fun tryLoadFromFile(file: File, password: CharArray, defaultAlias: String): SigningCredentials? {
+        if (!file.exists() || file.length() == 0L) return null
+        val formats = listOf(KeyStore.getDefaultType(), "PKCS12")
+        for (format in formats) {
+            try {
+                val ks = KeyStore.getInstance(format)
+                FileInputStream(file).use { stream ->
+                    ks.load(stream, password)
+                }
+                val creds = extractCredentials(ks, password, defaultAlias)
+                if (creds != null) return creds
+            } catch (ignored: Exception) {
+                // Try next
+            }
+        }
+        return null
+    }
+
+    private fun extractCredentials(ks: KeyStore, password: CharArray, defaultAlias: String): SigningCredentials? {
+        val targetAlias = if (ks.containsAlias(defaultAlias)) {
+            defaultAlias
+        } else {
+            ks.aliases().asSequence().firstOrNull { ks.isKeyEntry(it) } ?: return null
+        }
+
+        val key = ks.getKey(targetAlias, password) as? PrivateKey ?: return null
+        val cert = ks.getCertificate(targetAlias) as? X509Certificate ?: return null
+        return SigningCredentials(key, cert)
+    }
+
+    fun generateSelfSignedCertificate(
+        keyPair: KeyPair,
+        validityYears: Int = 25
+    ): X509Certificate {
+        val oidSha256WithRsa = byteArrayOf(
+            0x06, 0x09, 0x2A, 0x86.toByte(), 0x48, 0x86.toByte(), 0xF7.toByte(), 0x0D, 0x01, 0x01, 0x0B
+        )
+        val nullParams = byteArrayOf(0x05, 0x00)
+        val sigAlgId = derSeq(oidSha256WithRsa + nullParams)
+
+        // Version: v3 (0xA0 [0] EXPLICIT INTEGER 2)
+        val version = derTagged(0xA0, derInteger(2))
+
+        // Serial Number
+        val serialNumberBytes = BigInteger.valueOf(System.currentTimeMillis()).toByteArray()
+        val serial = derInteger(serialNumberBytes)
+
+        // Issuer & Subject Name: CN=APK Creator, O=Android, C=US
+        val cAttr = derSet(derSeq(byteArrayOf(0x06, 0x03, 0x55, 0x04, 0x06) + byteArrayOf(0x13, 0x02, 0x55, 0x53)))
+        val oBytes = "Android".toByteArray(Charsets.UTF_8)
+        val oAttr = derSet(derSeq(byteArrayOf(0x06, 0x03, 0x55, 0x04, 0x0A) + byteArrayOf(0x0C, oBytes.size.toByte()) + oBytes))
+        val cnBytes = "Android Debug".toByteArray(Charsets.UTF_8)
+        val cnAttr = derSet(derSeq(byteArrayOf(0x06, 0x03, 0x55, 0x04, 0x03) + byteArrayOf(0x0C, cnBytes.size.toByte()) + cnBytes))
+        val nameSeq = derSeq(cAttr + oAttr + cnAttr)
+
+        // Validity: 2020 to 2045+
+        val notBefore = byteArrayOf(0x17, 13) + "200101000000Z".toByteArray(Charsets.US_ASCII)
+        val notAfter = byteArrayOf(0x17, 13) + "450101000000Z".toByteArray(Charsets.US_ASCII)
+        val validity = derSeq(notBefore + notAfter)
+
+        // SubjectPublicKeyInfo (pre-encoded by RSAPublicKey)
+        val publicKeyInfo = keyPair.public.encoded
+
+        // TBSCertificate structure
+        val tbsCertificate = derSeq(version + serial + sigAlgId + nameSeq + validity + nameSeq + publicKeyInfo)
+
+        // Sign TBSCertificate using SHA256withRSA
+        val sig = Signature.getInstance("SHA256withRSA")
+        sig.initSign(keyPair.private)
+        sig.update(tbsCertificate)
+        val signatureBytes = sig.sign()
+
+        // signatureValue as BIT STRING
+        val signatureValue = derBitString(signatureBytes)
+
+        // Certificate = SEQUENCE { tbsCertificate, signatureAlgorithm, signatureValue }
+        val certDer = derSeq(tbsCertificate + sigAlgId + signatureValue)
+
+        val certFactory = CertificateFactory.getInstance("X.509")
+        return certFactory.generateCertificate(ByteArrayInputStream(certDer)) as X509Certificate
+    }
+
     fun signApk(
         context: Context,
         unsignedZipFile: File,
         outputSignedApkFile: File
     ) {
-        // Load debug keystore from assets
-        val ks = KeyStore.getInstance("PKCS12")
-        context.assets.open("debug.keystore").use { stream ->
-            ks.load(stream, "android".toCharArray())
-        }
-        val alias = "androiddebugkey"
-        val password = "android".toCharArray()
-        val privateKey = ks.getKey(alias, password) as PrivateKey
-        val cert = ks.getCertificate(alias) as X509Certificate
+        val credentials = getSigningCredentials(context)
+        val privateKey = credentials.privateKey
+        val cert = credentials.certificate
 
         val md = MessageDigest.getInstance("SHA-256")
 
@@ -193,5 +353,9 @@ object ApkSignerHelper {
 
     private fun derInteger(bytes: ByteArray): ByteArray {
         return byteArrayOf(0x02) + derLength(bytes.size) + bytes
+    }
+
+    private fun derBitString(bytes: ByteArray): ByteArray {
+        return byteArrayOf(0x03) + derLength(bytes.size + 1) + byteArrayOf(0x00) + bytes
     }
 }
