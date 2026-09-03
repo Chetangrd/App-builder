@@ -1,0 +1,7 @@
+{
+  "name": "APK Creator",
+  "description": "Web to Minimal Installable APK creator. Convert any web URL or local HTML document into an ultra-lightweight standalone APK with customizable icons, live preview, and built-in Print to PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

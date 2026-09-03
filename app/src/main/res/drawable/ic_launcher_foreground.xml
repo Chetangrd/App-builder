@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Centered within 66dp safe zone (between coordinates 21 and 87) -->
+    <!-- Package Box Top / Lid -->
+    <path
+        android:fillColor="#93C5FD"
+        android:pathData="M54,26 L76,37 L54,48 L32,37 Z" />
+
+    <!-- Package Box Left Face -->
+    <path
+        android:fillColor="#60A5FA"
+        android:pathData="M32,40 L52,50 L52,74 L32,64 Z" />
+
+    <!-- Package Box Right Face -->
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M56,50 L76,40 L76,64 L56,74 Z" />
+
+    <!-- Download / Install Arrow (Contrasting White with Drop Shadow) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M50,44 L58,44 L58,56 L64,56 L54,68 L44,56 L50,56 Z" />
+
+    <!-- Web Globe Mini Badge at Bottom Right -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M72,66 A10,10 0 1,0 72,86 A10,10 0 1,0 72,66" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:fillColor="#00000000"
+        android:pathData="M62,76 L82,76 M72,66 A5,10 0 0,0 72,86 A5,10 0 0,0 72,66 M72,66 L72,86" />
+</vector>
