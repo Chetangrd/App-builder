@@ -127,7 +127,12 @@ object ApkSignerHelper {
         }
 
         val key = ks.getKey(targetAlias, password) as? PrivateKey ?: return null
-        val cert = ks.getCertificate(targetAlias) as? X509Certificate ?: return null
+        val certChain = ks.getCertificateChain(targetAlias)
+        val cert = if (!certChain.isNullOrEmpty()) {
+            certChain[0] as? X509Certificate
+        } else {
+            ks.getCertificate(targetAlias) as? X509Certificate
+        } ?: return null
         return SigningCredentials(key, cert)
     }
 
@@ -206,6 +211,7 @@ object ApkSignerHelper {
                 .setV1SigningEnabled(true)
                 .setV2SigningEnabled(true)
                 .setV3SigningEnabled(true)
+                .setMinSdkVersion(21)
                 .setOtherSignersSignaturesPreserved(false)
                 .build()
 

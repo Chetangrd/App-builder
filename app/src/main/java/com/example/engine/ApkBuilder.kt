@@ -6,10 +6,28 @@ import com.example.data.GeneratedApk
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FilterOutputStream
+import java.io.OutputStream
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 object ApkBuilder {
+
+    private class CountingOutputStream(out: OutputStream) : FilterOutputStream(out) {
+        var count: Long = 0L
+            private set
+
+        override fun write(b: Int) {
+            out.write(b)
+            count++
+        }
+
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            out.write(b, off, len)
+            count += len
+        }
+    }
 
     suspend fun buildApk(
         context: Context,
@@ -85,33 +103,34 @@ object ApkBuilder {
             put("versionName", versionName)
         }.toString().toByteArray(Charsets.UTF_8)
 
-        // 5. Assemble unsigned ZIP archive
-        onProgress(0.75f, "Packaging APK container...")
-        ZipOutputStream(FileOutputStream(unsignedZipFile)).use { zout ->
+        // 5. Assemble unsigned ZIP archive with proper alignment & uncompressed resources.arsc
+        onProgress(0.75f, "Packaging aligned APK container...")
+        val cos = CountingOutputStream(FileOutputStream(unsignedZipFile))
+        ZipOutputStream(cos).use { zout ->
             // AndroidManifest.xml
-            writeZipEntry(zout, "AndroidManifest.xml", modifiedManifestBytes)
+            writeZipEntry(zout, cos, "AndroidManifest.xml", modifiedManifestBytes, stored = false)
 
-            // resources.arsc
-            writeZipEntry(zout, "resources.arsc", modifiedArscBytes)
+            // resources.arsc (MUST BE STORED AND 4-BYTE ALIGNED FOR MMAP)
+            writeZipEntry(zout, cos, "resources.arsc", modifiedArscBytes, stored = true)
 
             // classes.dex
-            writeZipEntry(zout, "classes.dex", dexBytes)
+            writeZipEntry(zout, cos, "classes.dex", dexBytes, stored = false)
 
-            // Launcher icons for standard and high density
-            writeZipEntry(zout, "res/drawable/ic_launcher.png", iconPngBytes)
-            writeZipEntry(zout, "res/drawable-xxhdpi/ic_launcher.png", iconPngBytes)
+            // Launcher icons (STORED and 4-byte aligned)
+            writeZipEntry(zout, cos, "res/drawable/ic_launcher.png", iconPngBytes, stored = true)
+            writeZipEntry(zout, cos, "res/drawable-xxhdpi/ic_launcher.png", iconPngBytes, stored = true)
 
             // assets/app_config.json
-            writeZipEntry(zout, "assets/app_config.json", configJson)
+            writeZipEntry(zout, cos, "assets/app_config.json", configJson, stored = false)
 
             // assets/local.html (if local)
             if (isLocalFile) {
                 val htmlBytes = localHtmlContent.toByteArray(Charsets.UTF_8)
-                writeZipEntry(zout, "assets/local.html", htmlBytes)
+                writeZipEntry(zout, cos, "assets/local.html", htmlBytes, stored = false)
             }
         }
 
-        // 6. Sign APK with v1 signature
+        // 6. Sign APK with multi-scheme (v1, v2, v3) signature
         onProgress(0.9f, "Signing APK package...")
         ApkSignerHelper.signApk(
             context = context,
@@ -141,8 +160,33 @@ object ApkBuilder {
         )
     }
 
-    private fun writeZipEntry(zout: ZipOutputStream, name: String, bytes: ByteArray) {
+    private fun writeZipEntry(
+        zout: ZipOutputStream,
+        countingOut: CountingOutputStream,
+        name: String,
+        bytes: ByteArray,
+        stored: Boolean = false
+    ) {
         val entry = ZipEntry(name)
+        if (stored) {
+            entry.method = ZipEntry.STORED
+            entry.size = bytes.size.toLong()
+            entry.compressedSize = bytes.size.toLong()
+            val crc = CRC32()
+            crc.update(bytes)
+            entry.crc = crc.value
+
+            // 4-byte alignment: data offset = currentOffset + 30 + nameBytes + extraBytes
+            val currentOffset = countingOut.count
+            val nameBytesLength = name.toByteArray(Charsets.UTF_8).size
+            val dataOffsetWithoutExtra = currentOffset + 30 + nameBytesLength
+            val pad = ((4 - (dataOffsetWithoutExtra % 4)) % 4).toInt()
+            if (pad > 0) {
+                entry.extra = ByteArray(pad)
+            }
+        } else {
+            entry.method = ZipEntry.DEFLATED
+        }
         zout.putNextEntry(entry)
         zout.write(bytes)
         zout.closeEntry()
